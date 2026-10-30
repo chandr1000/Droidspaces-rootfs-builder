@@ -9,8 +9,6 @@ on:
         description: 'Only regenerate rootfs.json from the latest release (skip build & release)'
         type: boolean
         default: false
-  schedule:
-    - cron: '0 0 * * 0'
 
 concurrency:
   group: rootfs-release
