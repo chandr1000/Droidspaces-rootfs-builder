@@ -189,9 +189,14 @@ fi
 # these ACCEPT rules are belt-and-braces; the NAT rule is the critical one.
 fail=0
 rule() {
-    if ! "$IPT" -C "$@" 2>/dev/null; then
-        if ! out=$("$IPT" -A "$@" 2>&1); then
-            LOG "WARNING: rule failed: $IPT -A $*"
+    # Canonical iptables order: [-t table] -C/-A chain rule...
+    # ("-C -t nat chain..." -> "Bad argument `nat'" on iptables-legacy;
+    #  that exact bug failed the v1 unit on akari on 2026-10-31.)
+    local table=filter
+    if [ "$1" = "-t" ]; then table="$2"; shift 2; fi
+    if ! "$IPT" -t "$table" -C "$@" 2>/dev/null; then
+        if ! out=$("$IPT" -t "$table" -A "$@" 2>&1); then
+            LOG "WARNING: rule failed: $IPT -t $table -A $*"
             LOG "  -> $out"
             fail=1
         fi
