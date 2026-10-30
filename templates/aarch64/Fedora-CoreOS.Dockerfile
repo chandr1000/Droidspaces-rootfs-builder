@@ -55,7 +55,7 @@ RUN dnf -y upgrade && \
 RUN curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo \
       -o /etc/yum.repos.d/docker-ce.repo && \
     rpm -qa --qf '%{NAME}\n' | grep -xE 'moby-engine|containerd|runc|podman-docker|docker-cli|docker-compose|docker' | xargs -r dnf -y remove && \
-    dnf -y --allowerasing install \
+    dnf -y install --allowerasing \
     docker-ce \
     docker-ce-cli \
     containerd.io \
