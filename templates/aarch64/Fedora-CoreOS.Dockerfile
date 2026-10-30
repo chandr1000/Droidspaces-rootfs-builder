@@ -152,21 +152,65 @@ cat > /usr/local/sbin/docker-android-net.sh <<'NETEOF'
 #!/bin/bash
 # Replaces dockerd's iptables management on Android kernels
 # (XT_MATCH_ADDRTYPE missing -> dockerd must run with iptables=false).
+# Best-effort by design: NEVER fails the unit. Every problem is logged
+# loudly so `journalctl -u docker-android-net` tells the whole story.
 set -u
+LOG() { echo "[docker-android-net] $*"; }
+
 # Stay out of host and none network modes (house rule)
-if grep -qs '^net_mode=' /run/droidspaces/container.config && \
-   grep -qsE '^net_mode=(host|none)$' /run/droidspaces/container.config; then
-    echo "Skipping docker net bootstrap: host or none network mode"
+if grep -qsE '^net_mode=(host|none)$' /run/droidspaces/container.config; then
+    LOG "Skipping: host or none network mode"
     exit 0
 fi
+
 IPT="/usr/sbin/iptables-legacy"
 [ -x "$IPT" ] || IPT="/usr/sbin/iptables"
-sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
-rule() { "$IPT" -C "$@" 2>/dev/null || "$IPT" -A "$@"; }
+
+# Kernel helpers may be modular on some GKI builds; load if possible.
+# No-op when built-in; missing /lib/modules inside the container is fine.
+for m in ip_tables iptable_filter iptable_nat nf_nat; do
+    modprobe "$m" 2>/dev/null || true
+done
+
+# --- 1. ip_forward (per-netns; required for nested container egress) ---
+fw() { cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 0; }
+if [ "$(fw)" != "1" ]; then
+    sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
+fi
+if [ "$(fw)" = "1" ]; then
+    LOG "ip_forward=1"
+else
+    LOG "WARNING: ip_forward could not be enabled (/proc/sys read-only?)"
+    LOG "WARNING: nested containers get NO outbound network until this is fixed"
+fi
+
+# --- 2. Netfilter rules ---
+# FORWARD policy stays ACCEPT (dockerd no longer touches iptables), so
+# these ACCEPT rules are belt-and-braces; the NAT rule is the critical one.
+fail=0
+rule() {
+    if ! "$IPT" -C "$@" 2>/dev/null; then
+        if ! out=$("$IPT" -A "$@" 2>&1); then
+            LOG "WARNING: rule failed: $IPT -A $*"
+            LOG "  -> $out"
+            fail=1
+        fi
+    fi
+}
 rule FORWARD -i docker0 -o docker0 -j ACCEPT
 rule FORWARD -i docker0 ! -o docker0 -j ACCEPT
-rule FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 rule -t nat POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE
+
+if ! ip link show docker0 >/dev/null 2>&1; then
+    LOG "NOTE: docker0 not up yet (dockerd starts after this unit)"
+fi
+if [ "$fail" = 0 ]; then
+    LOG "Netfilter ready (FORWARD accept + NAT for 172.17.0.0/16)"
+else
+    LOG "WARNING: some rules failed; 'docker run -p' still works via"
+    LOG "WARNING: userland-proxy, but container->internet NAT may not."
+fi
+exit 0
 NETEOF
 chmod +x /usr/local/sbin/docker-android-net.sh
 
@@ -213,6 +257,7 @@ cat > /etc/motd <<'MOTDEOF'
   Fedora CoreOS on Droidspaces (akari)
   Docker: sudo docker run --rm hello-world
   Hello world service: sudo docker run -d -p 8080:80 --name web busybox httpd -f -p 80 -h /tmp
+  Net bootstrap log: journalctl -u docker-android-net.service
 MOTDEOF
 touch /etc/ds-firstboot.done
 FBEOF
@@ -281,9 +326,16 @@ done
 for unit in zincati.service rpm-ostreed.service ostree-finalize-staged.service \
             ostree-boot-complete.service ostree-remount.service \
             afterburn.service afterburn-sshkeys@.service \
-            coreos-check-ssh-keys.service ignition-setup-user.ign.service; do
+            coreos-check-ssh-keys.service ignition-setup-user.ign.service \
+            chronyd.service auditd.service audit-rules.service \
+            bootloader-update.service coreos-warn-invalid-mounts.service \
+            var-lib-nfs-rpc_pipefs.mount; do
     ln -sf /dev/null "/etc/systemd/system/$unit"
 done
+# NOTE: chronyd   = clock belongs to the Android host (shared kernel clock)
+#       audit*    = global-kernel audit is not namespaced; cannot work here
+#       bootloader-update / nfs rpc_pipefs / coreos-warn-invalid-mounts =
+#       metal/ostree assumptions that never hold inside Droidspaces
 
 # Mark fixes as completed
 echo "Post-extraction fixes applied on $(date)" > /etc/droidspaces
