@@ -63,9 +63,18 @@ RUN curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo \
     docker-compose-plugin \
     && dnf clean all
 
-# House rule: legacy iptables is MANDATORY on Android kernels
-RUN alternatives --set iptables /usr/sbin/iptables-legacy && \
-    alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+# House rule: legacy iptables is MANDATORY on Android kernels.
+# Fedora base may ship only the nft variant -> install the legacy one,
+# select it via alternatives when configured, symlink as fallback,
+# and assert the resolved binary really is legacy.
+RUN dnf -y install iptables-legacy && \
+    (alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || \
+     ln -sf /usr/sbin/iptables-legacy /usr/sbin/iptables) && \
+    (alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null || \
+     ln -sf /usr/sbin/ip6tables-legacy /usr/sbin/ip6tables) && \
+    iptables --version | grep -q '(legacy)' && \
+    ip6tables --version | grep -q '(legacy)' && \
+    dnf clean all
 
 # ------------------------------------------------------------------
 # 3. Android compatibility (aid_* network groups)
@@ -93,9 +102,9 @@ RUN sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config || tru
 #    We ensure it deterministically (idempotent if base lacks it).
 # ------------------------------------------------------------------
 RUN <<EOF_RUN
-if ! id core &>/dev/null; then
-    useradd -m -u 1000 -G wheel,sudo,docker core
-fi
+id core &>/dev/null || useradd -m -u 1000 -G wheel,sudo,docker core
+# ensure admin + docker groups even if the base image shipped its own core
+usermod -aG wheel,sudo,docker core 2>/dev/null || true
 install -d -m 700 -o core -g core /home/core/.ssh
 cat > /home/core/.ssh/authorized_keys <<'KEYEOF'
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGimLq9GUsk+zbBeuDdMLB3RuPGKAqeSqqlSsrDaH6Ux chandr1000 global v2.1
@@ -106,8 +115,12 @@ echo 'core ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/50-droidspaces-core
 chmod 0440 /etc/sudoers.d/50-droidspaces-core
 EOF_RUN
 
-# SSH: key-only, no root login (matches FCOS upstream posture)
-RUN sed -ri 's/^#?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && \
+# SSH: key-only, no root login (matches FCOS upstream posture).
+# Drop-in wins over the main config (sshd include order), seds as backup.
+RUN mkdir -p /etc/ssh/sshd_config.d && \
+    printf 'PermitRootLogin no\nPasswordAuthentication no\nPubkeyAuthentication yes\n' \
+      > /etc/ssh/sshd_config.d/99-droidspaces.conf && \
+    sed -ri 's/^#?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && \
     sed -ri 's/^#?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
     sed -ri 's/^#?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
