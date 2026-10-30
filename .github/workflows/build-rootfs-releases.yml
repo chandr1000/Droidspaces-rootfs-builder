@@ -103,8 +103,8 @@ jobs:
           git add rootfs.json
           git diff --cached --quiet && { echo "rootfs.json unchanged"; exit 0; }
           git commit -m "chore: update rootfs.json for release ${{ needs.setup.outputs.build_id }}"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
 
   update-json:
     if: ${{ github.event.inputs.update_json_only == 'true' }}
@@ -124,5 +124,5 @@ jobs:
           git add rootfs.json
           git diff --cached --quiet && { echo "rootfs.json unchanged"; exit 0; }
           git commit -m "chore: update rootfs.json"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
