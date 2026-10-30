@@ -48,9 +48,13 @@ RUN dnf -y upgrade && \
 # ------------------------------------------------------------------
 # 2. Docker CE (download.docker.com/linux/fedora, stable channel)
 #    Version-matched: docker-ce + cli + containerd.io + buildx + compose
+#    NOTE: FCOS base ships Fedora's moby-engine/containerd, which conflict
+#    with docker-ce/containerd.io -> evict exactly the installed ones
+#    (self-maintaining: no-ops if a future FCOS base drops them).
 # ------------------------------------------------------------------
 RUN curl -fsSL https://download.docker.com/linux/fedora/docker-ce.repo \
       -o /etc/yum.repos.d/docker-ce.repo && \
+    rpm -qa --qf '%{NAME}\n' | grep -xE 'moby-engine|containerd|runc|podman-docker' | xargs -r dnf -y remove && \
     dnf -y install \
     docker-ce \
     docker-ce-cli \
