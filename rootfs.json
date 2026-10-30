@@ -6,10 +6,10 @@
     "description": "Fedora CoreOS rootfs with Docker CE + compose, key-only SSH, tuned for Android/Droidspaces (GKI).",
     "architecture": "aarch64",
     "file": "Fedora-CoreOS",
-    "download_url": "https://github.com/chandr1000/Droidspaces-rootfs-builder/releases/download/v20261030-220405/Fedora-CoreOS-Droidspaces-rootfs-aarch64-20261030-v20261030-220405.tar.xz",
-    "sha256": "679db2a8f16fca46fba5fd1315cc0fdf109fa958cae5a6af3c6e08e881c70747",
-    "size_bytes": 1277376404,
-    "version": "v20261030-220405",
+    "download_url": "https://github.com/chandr1000/Droidspaces-rootfs-builder/releases/download/v20261030-231329/Fedora-CoreOS-Droidspaces-rootfs-aarch64-20261030-v20261030-231329.tar.xz",
+    "sha256": "705cbcaa4d77a09b188311dbfc379b28630a5bb55506c8baff1d798f980daddc",
+    "size_bytes": 1277385760,
+    "version": "v20261030-231329",
     "build_date": "20261030"
   }
 ]
