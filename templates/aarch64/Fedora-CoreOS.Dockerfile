@@ -263,6 +263,9 @@ cat > /etc/motd <<'MOTDEOF'
   Docker: sudo docker run --rm hello-world
   Hello world service: sudo docker run -d -p 8080:80 --name web busybox httpd -f -p 80 -h /tmp
   Net bootstrap log: journalctl -u docker-android-net.service
+  Immutability: / and /usr read-only (FCOS-style); /etc /var /root /home /tmp writable
+  Maintenance:  sudo ds-unlock (rw /usr) | sudo ds-lock | disable: touch /etc/ds/immutability-off
+  Ro-root log:  journalctl -u ds-ro-root.service
 MOTDEOF
 touch /etc/ds-firstboot.done
 FBEOF
@@ -270,7 +273,142 @@ chmod +x /usr/local/sbin/ds-firstboot.sh
 EOF_RUN
 
 # ------------------------------------------------------------------
-# 9. Systemd tuning for Android kernels (house fixes)
+# 9. FCOS-style immutable root
+#    True FCOS behavior on Droidspaces: / and /usr read-only,
+#    /etc /var /root /home /tmp writable. Implemented at boot by
+#    pivot_root into a read-only bind-clone of the root tree.
+#    Validated live on akari (2026-10-31): touch / -> "Read-only file
+#    system", dnf5 refuses with "/usr is configured to be read-only",
+#    docker pull/run/-p publishing unaffected.
+#    NOTE: an overmount (rbind / /run/.ds-stage + remount,ro,bind /) is
+#    NOT sufficient - the namespace root mount is pinned underneath it,
+#    so absolute-path resolution never crosses the read-only clone.
+#    pivot_root replaces the ns root, which is what actually enforces.
+#    Fail-soft by design: any failure = journal note + writable root.
+#    Opt-out: touch /etc/ds/immutability-off and restart the container.
+# ------------------------------------------------------------------
+RUN <<EOF_RUN
+mkdir -p /etc/ds /usr/local/sbin
+
+cat > /usr/local/sbin/ds-ro-root <<'ROROOT'
+#!/bin/bash
+# Droidspaces: pivot into a FCOS-style read-only root view.
+#   ro: / and /usr        rw: /etc /var /root /home /tmp (/run stays rw via
+#   the cloned tmpfs). Never fails the unit: any problem is logged and the
+#   root simply stays writable. Sequence validated end-to-end on akari.
+set -u
+LOG() { echo "[ds-ro-root] $*"; }
+stage=/run/.ds-stage
+
+# Already immutable? (touch on / fails once the pivot has been applied)
+if ! touch /.ds-ro-probe 2>/dev/null; then
+    LOG "root already read-only, nothing to do"
+    exit 0
+fi
+rm -f /.ds-ro-probe
+
+undo() {
+    # best-effort teardown of everything we attached (lazy, recursive)
+    umount -l -R "$stage" 2>/dev/null || true
+}
+
+# pivot_root refuses shared propagation
+mount --make-rprivate / || { LOG "make-rprivate failed"; exit 0; }
+
+mkdir -p "$stage" || { LOG "cannot create $stage"; exit 0; }
+
+if ! mount --rbind / "$stage"; then
+    LOG "stage rbind failed"; rmdir "$stage" 2>/dev/null; exit 0
+fi
+if ! mkdir "$stage/run/ds-old" 2>/dev/null; then
+    LOG "cannot create put_old under $stage/run"; undo; exit 0
+fi
+if ! mount -o remount,ro,bind "$stage"; then
+    LOG "stage ro flip failed"; undo; exit 0
+fi
+
+# FCOS-style writable whitelist (rebinds ON TOP of the ro stage)
+for d in etc var root home tmp; do
+    if ! mount --rbind "/$d" "$stage/$d" 2>/dev/null; then
+        LOG "whitelist bind failed: /$d (dir stays read-only)"
+    fi
+done
+
+# /usr as its own mount -> per-directory unlock via ds-unlock
+if mount --rbind /usr "$stage/usr" 2>/dev/null; then
+    mount -o remount,ro,bind "$stage/usr" 2>/dev/null \
+        || LOG "/usr ro flip failed (stays stage-read-only)"
+else
+    LOG "/usr bind failed (stays stage-read-only)"
+fi
+
+if ! out=$(pivot_root "$stage" "$stage/run/ds-old" 2>&1); then
+    LOG "pivot_root failed: $out (root stays writable)"
+    undo
+    exit 0
+fi
+if ! umount -l /run/ds-old 2>/dev/null; then
+    LOG "WARNING: old rw root still visible under /run/ds-old (restart clears it)"
+fi
+LOG "root pivoted read-only (FCOS-style); writable: /etc /var /root /home /tmp"
+LOG "unlock /usr: ds-unlock | re-lock: ds-lock | disable: touch /etc/ds/immutability-off"
+exit 0
+ROROOT
+chmod +x /usr/local/sbin/ds-ro-root
+
+cat > /usr/local/sbin/ds-unlock <<'UNLEOF'
+#!/bin/bash
+# Make /usr writable for maintenance (dnf install, edits under /usr).
+# Re-lock afterwards with: ds-lock
+if mount -o remount,rw,bind /usr 2>/dev/null; then
+    echo "ds: /usr unlocked (rw) - re-lock with: sudo ds-lock"
+else
+    echo "ds: cannot unlock /usr (immutable root active? journalctl -u ds-ro-root)" >&2
+    exit 1
+fi
+UNLEOF
+chmod +x /usr/local/sbin/ds-unlock
+
+cat > /usr/local/sbin/ds-lock <<'LKLEOF'
+#!/bin/bash
+# Re-apply read-only /usr after ds-unlock
+if mount -o remount,ro,bind /usr 2>/dev/null; then
+    echo "ds: /usr locked (read-only)"
+else
+    echo "ds: cannot lock /usr" >&2
+    exit 1
+fi
+LKLEOF
+chmod +x /usr/local/sbin/ds-lock
+
+cat > /etc/ds/README <<'DSEOF'
+/etc/ds - Droidspaces runtime switches
+
+  immutability-off   create this file (touch) to boot with a fully writable
+                     root instead of the FCOS-style read-only root view.
+                     Takes effect on the next container start.
+DSEOF
+
+cat > /etc/systemd/system/ds-ro-root.service <<'UNITEOF'
+[Unit]
+Description=Droidspaces FCOS-style read-only root view
+Documentation=https://github.com/chandr1000/Droidspaces-rootfs-builder/tree/akari-build
+After=local-fs.target
+Before=docker.service sshd.service
+ConditionPathExists=!/etc/ds/immutability-off
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ds-ro-root
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+EOF_RUN
+
+# ------------------------------------------------------------------
+# 10. Systemd tuning for Android kernels (house fixes)
 # ------------------------------------------------------------------
 RUN <<EOF_RUN
 # --- 1. General Fixes ---
@@ -351,13 +489,14 @@ COPY scripts/bashrc.sh /etc/profile.d/ds-aliases.sh
 RUN chmod +x /etc/profile.d/ds-aliases.sh
 
 # ------------------------------------------------------------------
-# 10. Enable services (manual symlinks, offline-deterministic)
+# 11. Enable services (manual symlinks, offline-deterministic)
 # ------------------------------------------------------------------
 RUN <<EOF_RUN
 mkdir -p /etc/systemd/system/multi-user.target.wants \
          /etc/systemd/system/sockets.target.wants
 for service in NetworkManager.service systemd-udevd.service sshd.service \
-               docker.service docker-android-net.service ds-firstboot.service; do
+               docker.service docker-android-net.service ds-firstboot.service \
+               ds-ro-root.service; do
     if [ -f "/usr/lib/systemd/system/$service" ]; then
         ln -sf "/usr/lib/systemd/system/$service" \
                "/etc/systemd/system/multi-user.target.wants/$service"
@@ -371,7 +510,7 @@ ln -sf /usr/lib/systemd/system/docker.socket \
 EOF_RUN
 
 # ------------------------------------------------------------------
-# 11. Final cleanup
+# 12. Final cleanup
 # ------------------------------------------------------------------
 RUN dnf clean all && \
     rm -rf /var/cache/libdnf5* /var/cache/dnf /var/log/* /tmp/*
@@ -380,7 +519,7 @@ RUN dnf clean all && \
 FROM scratch AS export
 LABEL droidspaces.name="Fedora CoreOS 44 - Server" \
       droidspaces.distro="Fedora CoreOS" \
-      droidspaces.description="Fedora CoreOS rootfs with Docker CE + compose, key-only SSH, tuned for Android/Droidspaces (GKI)." \
+      droidspaces.description="Fedora CoreOS rootfs with Docker CE + compose, key-only SSH, FCOS-style read-only root (immutable / and /usr, writable /etc /var), tuned for Android/Droidspaces (GKI)." \
       droidspaces.author="chandr1000"
 
 # Copy the entire filesystem from the customizer stage
