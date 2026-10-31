@@ -3,13 +3,13 @@
     "author": "chandr1000",
     "name": "Fedora CoreOS 44 - Server",
     "distro": "Fedora CoreOS",
-    "description": "Fedora CoreOS rootfs with Docker CE + compose, key-only SSH, tuned for Android/Droidspaces (GKI).",
+    "description": "Fedora CoreOS rootfs with Docker CE + compose, key-only SSH, FCOS-style read-only root (immutable / and /usr, writable /etc /var), tuned for Android/Droidspaces (GKI).",
     "architecture": "aarch64",
     "file": "Fedora-CoreOS",
-    "download_url": "https://github.com/chandr1000/Droidspaces-rootfs-builder/releases/download/v20261030-231329/Fedora-CoreOS-Droidspaces-rootfs-aarch64-20261030-v20261030-231329.tar.xz",
-    "sha256": "705cbcaa4d77a09b188311dbfc379b28630a5bb55506c8baff1d798f980daddc",
-    "size_bytes": 1277385760,
-    "version": "v20261030-231329",
-    "build_date": "20261030"
+    "download_url": "https://github.com/chandr1000/Droidspaces-rootfs-builder/releases/download/v20261031-023351/Fedora-CoreOS-Droidspaces-rootfs-aarch64-20261031-v20261031-023351.tar.xz",
+    "sha256": "95c80fa7f09c9740ac1e1d4be488facea300a48d56d5345d151eb4b197141e4b",
+    "size_bytes": 1277359892,
+    "version": "v20261031-023351",
+    "build_date": "20261031"
   }
 ]
