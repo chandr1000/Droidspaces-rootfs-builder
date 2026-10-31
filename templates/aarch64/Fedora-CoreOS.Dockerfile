@@ -286,6 +286,10 @@ EOF_RUN
 #    pivot_root replaces the ns root, which is what actually enforces.
 #    Fail-soft by design: any failure = journal note + writable root.
 #    Opt-out: touch /etc/ds/immutability-off and restart the container.
+#    Backup: byte-identical copies of every file created below live in
+#    /recovery (repo root, see recovery/README.md) together with an
+#    installer and a diagnosis playbook. Keep them when gating this
+#    feature - that directory is the restore source.
 # ------------------------------------------------------------------
 RUN <<EOF_RUN
 mkdir -p /etc/ds /usr/local/sbin

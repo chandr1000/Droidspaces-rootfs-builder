@@ -1,0 +1,14 @@
+[Unit]
+Description=Droidspaces FCOS-style read-only root view
+Documentation=https://github.com/chandr1000/Droidspaces-rootfs-builder/tree/akari-build
+After=local-fs.target
+Before=docker.service sshd.service
+ConditionPathExists=!/etc/ds/immutability-off
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ds-ro-root
+
+[Install]
+WantedBy=multi-user.target

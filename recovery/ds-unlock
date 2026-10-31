@@ -1,0 +1,9 @@
+#!/bin/bash
+# Make /usr writable for maintenance (dnf install, edits under /usr).
+# Re-lock afterwards with: ds-lock
+if mount -o remount,rw,bind /usr 2>/dev/null; then
+    echo "ds: /usr unlocked (rw) - re-lock with: sudo ds-lock"
+else
+    echo "ds: cannot unlock /usr (immutable root active? journalctl -u ds-ro-root)" >&2
+    exit 1
+fi

@@ -1,0 +1,62 @@
+#!/bin/bash
+# Droidspaces: pivot into a FCOS-style read-only root view.
+#   ro: / and /usr        rw: /etc /var /root /home /tmp (/run stays rw via
+#   the cloned tmpfs). Never fails the unit: any problem is logged and the
+#   root simply stays writable. Sequence validated end-to-end on akari.
+set -u
+LOG() { echo "[ds-ro-root] $*"; }
+stage=/run/.ds-stage
+
+# Already immutable? (touch on / fails once the pivot has been applied)
+if ! touch /.ds-ro-probe 2>/dev/null; then
+    LOG "root already read-only, nothing to do"
+    exit 0
+fi
+rm -f /.ds-ro-probe
+
+undo() {
+    # best-effort teardown of everything we attached (lazy, recursive)
+    umount -l -R "$stage" 2>/dev/null || true
+}
+
+# pivot_root refuses shared propagation
+mount --make-rprivate / || { LOG "make-rprivate failed"; exit 0; }
+
+mkdir -p "$stage" || { LOG "cannot create $stage"; exit 0; }
+
+if ! mount --rbind / "$stage"; then
+    LOG "stage rbind failed"; rmdir "$stage" 2>/dev/null; exit 0
+fi
+if ! mkdir "$stage/run/ds-old" 2>/dev/null; then
+    LOG "cannot create put_old under $stage/run"; undo; exit 0
+fi
+if ! mount -o remount,ro,bind "$stage"; then
+    LOG "stage ro flip failed"; undo; exit 0
+fi
+
+# FCOS-style writable whitelist (rebinds ON TOP of the ro stage)
+for d in etc var root home tmp; do
+    if ! mount --rbind "/$d" "$stage/$d" 2>/dev/null; then
+        LOG "whitelist bind failed: /$d (dir stays read-only)"
+    fi
+done
+
+# /usr as its own mount -> per-directory unlock via ds-unlock
+if mount --rbind /usr "$stage/usr" 2>/dev/null; then
+    mount -o remount,ro,bind "$stage/usr" 2>/dev/null \
+        || LOG "/usr ro flip failed (stays stage-read-only)"
+else
+    LOG "/usr bind failed (stays stage-read-only)"
+fi
+
+if ! out=$(pivot_root "$stage" "$stage/run/ds-old" 2>&1); then
+    LOG "pivot_root failed: $out (root stays writable)"
+    undo
+    exit 0
+fi
+if ! umount -l /run/ds-old 2>/dev/null; then
+    LOG "WARNING: old rw root still visible under /run/ds-old (restart clears it)"
+fi
+LOG "root pivoted read-only (FCOS-style); writable: /etc /var /root /home /tmp"
+LOG "unlock /usr: ds-unlock | re-lock: ds-lock | disable: touch /etc/ds/immutability-off"
+exit 0

@@ -60,6 +60,22 @@ release with all tarballs, then regenerates and commits `rootfs.json`. Any faile
 blocks the release. The manual "update_json_only" input regenerates `rootfs.json` from the
 current latest release without building.
 
+## Immutable root & unlock recovery
+
+The Fedora CoreOS template ships an FCOS-style read-only root: `/` and `/usr`
+are immutable, `/etc /var /root /home /tmp` stay writable. It is applied at
+boot by `ds-ro-root.service` (`pivot_root` into a read-only bind-clone).
+Maintenance: `sudo ds-unlock` (rw `/usr`, this boot) / `sudo ds-lock`;
+permanent opt-out: `sudo touch /etc/ds/immutability-off` and restart the
+container.
+
+Byte-identical backup copies of the original unlock tooling live in
+[`recovery/`](recovery/README.md), together with `install-unlock.sh` (restore
+the tooling onto a running container or a bare rootfs tree) and a
+ship-sanity / diagnosis playbook. If a shipped image ever boots wrong, go
+there first. Keep `recovery/` when gating the feature from the runtime and
+the image — it is the restore source.
+
 ## Desktop templates and the desktop user
 
 GUI templates (`*-XFCE`, `*-bspwm`) autostart the desktop on the Termux:X11 display and run it

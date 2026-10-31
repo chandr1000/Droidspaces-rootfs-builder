@@ -1,0 +1,5 @@
+/etc/ds - Droidspaces runtime switches
+
+  immutability-off   create this file (touch) to boot with a fully writable
+                     root instead of the FCOS-style read-only root view.
+                     Takes effect on the next container start.

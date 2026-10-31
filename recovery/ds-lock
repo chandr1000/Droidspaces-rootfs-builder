@@ -1,0 +1,8 @@
+#!/bin/bash
+# Re-apply read-only /usr after ds-unlock
+if mount -o remount,ro,bind /usr 2>/dev/null; then
+    echo "ds: /usr locked (read-only)"
+else
+    echo "ds: cannot lock /usr" >&2
+    exit 1
+fi
